@@ -1,0 +1,1289 @@
+---
+title: "Catastrophising tasks and questionnaires"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+
+```{r}
+library(tidyverse)
+library(countrycode)
+library(rstan)
+library(hBayesDM)
+library(rsq)
+library(table1)
+library(ggplot2)
+library(svDialogs)
+```
+
+```{r}
+workingdir = ('Insert directory')
+save_images <- as.integer(dlgInput('Do you want to save images? 1=yes, 0=no: ', Sys.info()['0'])$res)
+```
+
+Questionnaires
+
+Prolific information
+```{r Prolific info}
+prolific_info <- read.csv(paste0(workingdir, '/datacollection2.nosync/prolific_export_28052020.csv'))
+  
+
+prolific_approved <- as.data.frame(prolific_info) %>%
+  filter(status == "APPROVED") %>%
+  filter(status != "RETURNED") %>%
+  filter(status != "REJECTED") %>%
+  filter(Sex != "CONSENT REVOKED") %>%
+  select(participant_id, age, Nationality, Employment.Status, Sex, Student.Status)
+
+prolific_approved$Employment.Status[prolific_approved$Employment.Status == "Due to start a new job within the next month"] <- "Other"
+prolific_approved$Employment.Status[prolific_approved$Employment.Status == "Not in paid work (e.g. homemaker', 'retired or disabled)"] <- "Other"
+
+prolific_approved$Employment.Status[prolific_approved$Employment.Status == ''] <- "Other"
+
+prolific_approved$Sex <- factor(prolific_approved$Sex)
+prolific_approved$Employment.Status <- factor(prolific_approved$Employment.Status)
+
+prolific_approved$continent <- countrycode(sourcevar = prolific_approved[, "Nationality"],
+                            origin = "country.name",
+                            destination = "region23")
+
+
+
+
+prolific_quest <- read.csv(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-svec.csv')
+
+diagnosis <- prolific_quest %>%
+  filter(Question.Key == "diagnosis")%>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("participant_id", "Diagnosis"))
+
+prolific_approved <- merge(diagnosis, prolific_approved, by = "participant_id")
+
+prolific_approved$Diagnosis <- factor(prolific_approved$Diagnosis)
+  
+label(prolific_approved$age)<- "Age"
+label(prolific_approved$Employment.Status)<- "Employment Status"
+label(prolific_approved$continent)<- "Continent of Birth"
+label(prolific_approved$Diagnosis)<- "Mental Illness Diagnosis"
+
+table1(~ Sex + age + continent + Employment.Status + Diagnosis, data = prolific_approved, overall = "Total ")
+
+
+
+```
+
+
+
+
+CATASTROPHISING QUESTIONNAIRE
+
+Read catastrophising questionnaite raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised answers, transform them into numbers, and add up the response to each question to get the overall score. 
+
+"cat_health" is the variable that takes the score for three questions from the catastrophising questionnaire that ask about health: 21- "I imagine that I might have a serious health issue.",  9- "If I have a medical symptom (headache, heart palpitations, stomach ache), I think I must have a serious disease.", 22- "If I have an illness, I don't believe that treatment will work."
+
+Merge the two score into one dataframe(alldata) by participant's ID.
+```{r Catastrophising questionnaire}
+#read Catastrophising questionnaire raw data
+cat_quest <- read.csv(paste0(workingdir, '/datacollection2.nosync/data_exp_13345-v30_questionnaire-23y6.csv'))
+  
+
+#create a varible for filtered data
+cat_score <- cat_quest %>% 
+   filter(str_detect(Question.Key, 'quantised')) %>%  #filter only numerical responses
+  select(Participant.Public.ID, Response) %>% #select columns of interest
+  set_names(c("ID", "score")) %>% #simplify column names
+  transform(score = as.character(score)) %>% #transform responses into characters
+  transform(score = as.numeric(score)) %>% #transform responses into numbers
+  group_by(ID) %>% #group responses by participant
+  summarise(catScore = sum(score, na.rm = TRUE)) #sum responses per participant
+
+
+cat_health <- cat_quest %>% filter(Question.Key %in% c('21-quantised','9-quantised','22-quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(catHealthScore = sum(score, na.rm = TRUE))
+
+alldata <- merge(cat_score, cat_health, by = 'ID')
+
+
+```
+
+
+
+
+PHQ8
+
+Read Patient Health Questionnaire 8 raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses, transform them into numbers, and add up the response to each question to get the overall score. Merge scores with alldata by. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+```{r PHQ}
+phq <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-8bly.csv'))
+  
+
+phq_score <- phq %>% 
+   filter(str_detect(Question.Key, 'quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+   set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(phqScore = sum(score - 1, na.rm = TRUE)) 
+
+alldata <- right_join(phq_score, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$phqScore, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = phqScore)) +
+  xlab("Catastrophising scores")+ ylab("PHQ-9 scores") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+
+```
+
+
+
+
+PSWQ
+
+Read Penn State Worry Questionnaire raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+```{r PSWQ}
+pswq <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-m1gp.csv'))
+
+positive <- pswq %>% filter(Question.Key %in% c('response-17-quantised','response-3-quantised','response-8-quantised','response-10-quantised','response-11-quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(positiveScore = sum(score, na.rm = TRUE))
+
+negative <- pswq %>% filter(Question.Key %in% c('response-2-quantised','response-4-quantised','response-5-quantised','response-6-quantised','response-7-quantised','response-9-quantised','response-12-quantised','response-13-quantised', 'response-14-quantised', 'response-15-quantised', 'response-16-quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(negativeScore = sum(score, na.rm = TRUE))
+
+pswq_score <- left_join(positive, negative, by = "ID")
+pswq_score$pswqScore <- pswq_score$negativeScore - pswq_score$positiveScore
+pswq_score <- select(pswq_score, ID, pswqScore)
+
+alldata <- right_join(pswq_score, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$pswqScore, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = pswqScore)) +
+  xlab("Catastrophising scores")+ ylab("PSWQ scores") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+  
+```
+
+
+
+
+
+GAD
+
+Read Generalised Anxiety Disorder questionnaire raw data and delete two participants. Filter quantised responses and filter out response to question 9: "If you checked off any problems, how difficult have these made it for you to do your work, take care of things at home, or get along with other people?", since this question is conditioned to other other questions.
+Transform the responses into numbers, and add up all responses to find the final score. Merge the score with all the data frame containing the other questionnaires by participant's ID.  Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+```{r GAD}
+gad <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-x6mx.csv'))
+  
+
+gad_score <- gad %>% 
+   filter(str_detect(Question.Key, 'quantised')) %>%
+  filter(str_detect(Question.Key, 'response-9', negate = TRUE)) %>% #delete quesiton 9 as it's not part of the final score
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(gadScore = sum(score - 1, na.rm = TRUE))
+ 
+
+alldata <- right_join(gad_score, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$gadScore, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = gadScore)) +
+  xlab("Catastrophising scores")+ ylab("GAD scores") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+```
+
+
+
+
+STAI-T
+
+Read State-Trait Anxiety Inventory raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+```{r STAI-T}
+stai_t <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-rr7k.csv'))
+
+  
+positive <- stai_t %>% filter(Question.Key %in% c('response-2-quantised','response-4-quantised','response-7-quantised','response-8-quantised','response-11-quantised','response-14-quantised','response-15-quantised','response-17-quantised', 'response-20-quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(positiveScore = sum(score, na.rm = TRUE))
+
+negative <- stai_t %>% filter(Question.Key %in% c('response-3-quantised','response-5-quantised','response-6-quantised','response-9-quantised','response-10-quantised','response-12-quantised','response-13-quantised','response-16-quantised', 'response-18-quantised', 'response-19-quantised', 'response-21-quantised')) %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(negativeScore = sum(score, na.rm = TRUE))
+
+stai_score <- left_join(positive, negative, by = "ID")
+stai_score$staiScore <- stai_score$negativeScore - stai_score$positiveScore
+stai_score <- select(stai_score, ID, staiScore)
+
+alldata <- right_join(stai_score, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$staiScore, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = staiScore)) +
+  xlab("Catastrophising scores")+ ylab("STAI-T scores") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+  
+```
+
+
+
+
+COVID19
+
+Read the COVID19 and Catastrophising questionnaire raw data. Filter the questions that access worry about the impact of the pandemic. Transform the responses in number and add up to find the overall worry(covid19) score. Merge the score with the other questionnaires and test the correlation between the covid score and the catastrophising score using Pearson's correlation and the correlation between the scores in the PSWQ and the covid scores. Then test the correlation, using the same method, between the covid score and the score of responses to the health related questions from the catastrophising questionnaire.
+
+Test the correlation between the response to the question 2 from the covid questionnaire: "How likely do you think you are to catch the virus?" and the catastrophising score. And test the correlation between the response to the question 9 from the covid questionnaire: "How do you think you will be affected by the global effects of the virus?" and the catastrophising score.
+```{r COVID}
+covid19 <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-artm.csv'))
+
+worry_questions <- c('response-  1', 'response-2', 'response-3', 'response-5', 'response-6', 'response-9')
+covid_score <- covid19 %>% 
+   filter(Question.Key %in% worry_questions) %>%
+  select(Participant.Public.ID, Response) %>%
+   set_names(c("ID", "score")) %>%
+  transform(score = as.character(score)) %>%
+  transform(score = as.numeric(score)) %>%
+  group_by(ID) %>%
+  summarise(covidScore = sum(score, na.rm = TRUE))
+
+alldata <- right_join(covid_score, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$covidScore, method = 'pearson')
+covid <- ggplot(alldata, aes(x = covidScore, y = catScore )) +
+  xlab("COVID19 scores")+ ylab("Catastrophising scores") + 
+  geom_smooth(method = 'lm', colour = "#81de8c", size = 3) + 
+  ggtitle("A") +
+  geom_point(colour = "#81de8c", size = 3)+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+cor.test(x = alldata$catHealthScore, y = alldata$covidScore, method = 'pearson')
+covid_health <- ggplot(alldata, aes(x = covidScore, y = catHealthScore)) +
+  xlab("COVID19 scores")+ ylab("Catastrophising scores - Health") + 
+  geom_smooth(method = 'lm', colour = "#81de8c", size = 3) + 
+  ggtitle("B") +
+  geom_point(colour = "#81de8c", size = 3) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+cor.test(x = alldata$pswqScore, y = alldata$covidScore, method = 'pearson')
+covid_worry <- ggplot(alldata, aes(x = covidScore, y = pswqScore)) +
+  xlab("COVID19 scores") + ylab("PSWQ scores") + 
+  geom_smooth(method = 'lm', colour = "#81de8c", size = 3) +
+  ggtitle("C")+
+  geom_point(colour = "#81de8c", size = 3) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+library(patchwork)
+covid_plot_study1 <- (covid | covid_health )/ (covid_worry) + plot_layout(guides = 'collect')
+if (save_images==1){
+  ggsave(covid_plot_study1, file=paste0(workingdir,'/covid_plot_study1.png'),height=9,width=12)
+}
+
+
+
+ question2 <- covid19 %>% 
+   filter(Question.Key %in% 'response-2') %>%
+  select(Participant.Public.ID, Response) %>%
+   set_names(c("ID", "question2Covid")) %>%
+  transform(question2Covid = as.character(question2Covid)) %>%
+  transform(question2Covid = as.numeric(question2Covid))
+ 
+alldata <- right_join(question2, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$question2Covid, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = question2Covid)) +
+  xlab("Catastrophising scores")+ ylab("How likely do you think you are to catch the virus?") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+  
+
+question9 <- covid19 %>% 
+   filter(Question.Key %in% 'response-9') %>%
+  select(Participant.Public.ID, Response) %>%
+   set_names(c("ID", "question9Covid")) %>%
+  transform(question9Covid = as.character(question9Covid)) %>%
+  transform(question9Covid = as.numeric(question9Covid))
+
+alldata <- right_join(question9, alldata, by = 'ID') 
+
+cor.test(x = alldata$catScore, y = alldata$question9Covid, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = question9Covid)) +
+  xlab("Catastrophising scores")+ ylab("How do you think you will be affected by the global effects of the virus?") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+ 
+
+```
+
+
+
+
+MATHS TASK
+
+Read the Maths task raw data, exclude the two participants who did not meet the criteria to be included in the analysis. Filter only the first self-report performance question, that will be named "ability", and the end value to the slider. Transform the values in numbers and merge the values with the dataframe including all questionnaire scores by ID. Test the correlation between the ability and the catastrophising score with Pearson's test. 
+
+Next, filter the 3 self-report performance (one each block) in relation to the task, filter only the end slider value and find the avarege for the 3 responses per participants. Test the correlation of these values with the catastrophisig scores.
+Do the same for the 3 difficulty questions (one each block). 
+
+To find the number of correct answers, filter the zone type to "response_text_entry" and the screen number "2". Add up all the corrects "1" and test the correlation of correct answers witht the catastrophising score. 
+To check if only the correct answers to the maths questions were selected, find the number of incorrect answers by filtering the same way as the correct, but this time only selecting the incorrets. Then merge both correct and incorret answers and add them up, the total should be 15 per participants since there were 15 math questions in total.
+
+The model for the maths task and the catastrophising score will take ability as independent variable and the performance questions, the difficulty questions and the number of correct answer and covariants. 
+The model for the maths task and the questionnaires will take ability as independent variable and all the questionnaire's scores as dependent variables.
+```{r Maths}
+maths <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_task-r8ty.csv'))
+  
+
+ability <- maths %>% #first "performance question" before task
+  filter(display == "Performance question" & Zone.Type == "response_slider_endValue") %>% #select only final value
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "abilityMaths")) %>%
+  transform(abilityMaths = as.character(abilityMaths)) %>%
+  transform(abilityMaths = as.numeric(abilityMaths)) %>%
+  group_by(ID)
+
+alldata <- right_join(ability, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$abilityMaths, method = 'pearson')
+abili <- ggplot(alldata, aes(y = catScore, x = abilityMaths)) +
+  ylab("Catastrophising scores")+ xlab("Self-report ability") + 
+  geom_smooth(method = 'lm', colour = "#ed7e68", size = 2) +
+  ggtitle("B") +
+  geom_point(colour = "#ed7e68", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+
+performance <- maths %>% #performance question about the task
+  filter(display == "Performance question 2" & Zone.Type == "response_slider_endValue")%>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "response")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response)) %>%
+  group_by(ID) %>%
+  summarise(performanceMaths = mean(response))
+
+alldata <- right_join(performance, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$performanceMaths, method = 'pearson')
+perform <- ggplot(alldata, aes(y = catScore, x = performanceMaths)) +
+  ylab("Catastrophising scores")+ xlab("Self-report performance mean") + 
+  geom_smooth(method = 'lm', colour = "#ed7e68", size = 2) + 
+  ggtitle("A") +
+  geom_point(colour = "#ed7e68", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+ 
+library(patchwork)
+maths_plot <- (perform / abili) + plot_layout(guides = 'collect')
+
+if (save_images==1){
+  ggsave(maths_plot, file=paste0(workingdir,'/maths_plot.png'),height=9,width=12)
+}
+
+
+difficulty <- maths %>% #question on how difficult the task was
+  filter(display == "Difficulty question" & Zone.Type == "response_slider_endValue") %>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "response")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response)) %>%
+  group_by(ID) %>%
+  summarise(difficultyMaths = mean(response)) 
+
+alldata <- right_join(difficulty, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$difficultyMaths, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = difficultyMaths)) +
+  xlab("Catastrophising scores")+ ylab("Dificulty mean") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+
+correct <- maths %>%
+  filter(Zone.Type == "response_text_entry" & Screen.Number == 2 & Correct == 1) %>% 
+  select(Participant.Public.ID, Correct) %>%
+  set_names(c("ID", "Correct")) %>%
+  transform(response = as.character(Correct)) %>%
+  transform(response = as.numeric(Correct)) %>%
+  group_by(ID) %>%
+  summarise(correctMaths = sum(Correct))
+
+alldata <- right_join(correct, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$correctMaths, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = correctMaths)) +
+  xlab("Catastrophising scores")+ ylab("Correct answers") + 
+  geom_smooth(method = 'lm') + 
+  geom_point()
+
+
+incorrect <- maths %>%
+  filter(Zone.Type == "response_text_entry" & Screen.Number == 2 & Incorrect == 1) %>% 
+  select(Participant.Public.ID, Incorrect) %>%
+  set_names(c("ID", "Incorrect")) %>%
+  transform(response = as.character(Incorrect)) %>%
+  transform(response = as.numeric(Incorrect)) %>%
+  group_by(ID) %>%
+  summarise(incorrectMaths = sum(Incorrect))
+
+check <- left_join(correct, incorrect, by = 'ID')
+check[is.na(check)] <- 0
+check$count <- check$correctMaths + check$incorrectMaths
+
+
+
+model_maths_performance <- lm(performanceMaths ~ catScore + difficultyMaths + correctMaths, data = alldata)
+summary(model_maths_performance)
+
+model_maths_ability_questionnaires <- lm(performanceMaths ~ catScore + covidScore, data = alldata)
+summary(model_maths_ability_questionnaires)
+
+model_all_maths_questionnaires <- lm(performanceMaths ~ catScore + covidScore + difficultyMaths + correctMaths, data = alldata)
+summary(model_maths_ability_questionnaires)
+
+anova(model_maths_performance, model_all_maths_questionnaires)
+
+model_maths_ability <- lm(abilityMaths ~ catScore + correctMaths, data = alldata)
+summary(model_maths_ability)
+
+ability_questionnaires <- lm(abilityMaths ~ catScore + gadScore + phqScore + pswqScore, data = alldata)
+summary(ability_questionnaires)
+
+```
+
+
+
+
+GAMBLING TASK
+
+Read Gambling task raw data and delete two participants who were excluded.
+Filter only responses to the estimation of the points earned in each block question ("estimation_block"). Find the difference between the participant's estimation of the points earned in each block and the actual number of points earned in each block. Then take the mean of the that difference ("estimation_all_blocks") for each participant and test it's correlation with the catastrophising score using Pearson's test. 
+
+Filter only responses to the estimation of points that will be earned by the end of the task ("estimation end"). Find the difference between the participant's estimation of the total points that will be earned and the actual number of total points (540) earned. Then take the mean of the that difference ("estimation_end_all") for each participant and test it's correlation with the catastrophising score using Pearson's test.
+
+Filter only the responses to the estimation of of points that will be earned by the end of the task made on the second block(block where all the points were negative). Find the difference between the participants response and the actual number of total points earned in the end ("estimation_end_block2") and test it's correlation with the catastrophising score.
+
+Filter only the responses to the confidence questions in relation to the estimation of points earned for each block ("confidence_block"). Find the avarege of all the 5 blocks and test the correlation with the catastrophising score.
+
+Filter only the response to the confidence question in relation to estimation of points earned by the end of the task ("confidence_end"). Take the average of all the 5 blocks ("confidence_end_all") and test the correlation with the catastrophising score.
+
+The model take the estimation of the total points as a independent variable and the confidence in this estimation and the estimation of points per block as dependent variables.
+```{r Gambling}
+gambling <- read.csv(paste0(workingdir, '/datacollection2.nosync/data_exp_13345-v30_task-p3z1.csv'))
+  
+
+estimation_block <- gambling %>% #question on estimation of points earned for each block
+  filter(display == "Question" & Screen.Name == "Screen 1" & Zone.Type == "response_slider_endValue") %>%
+  select(Participant.Public.ID, Trial.Number, Response) %>%
+  set_names(c("ID", "trial", "response")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response)) %>%
+  group_by(ID, trial) %>%
+  summarise(delta =
+  if(trial == 1) {delta = 345 -response}
+  else if (trial == 2){delta = -535 - response}
+  else if (trial == 3){delta = 360 - response}
+  else if (trial == 4){delta = 270 - response}
+  else if (trial == 5){delta = 100 - response})
+
+
+estimation_error <- estimation_block %>% summarise(estimationError = mean(abs(delta)))
+alldata <- right_join(estimation_error, alldata, by = 'ID')
+
+
+
+
+estimation_block_sd <- estimation_block %>% ungroup () %>% select(trial, delta) %>% group_by(trial) %>% summarise( sd = sd(delta), delta = mean(delta))
+estimation_across_plot <- ggplot(estimation_block_sd, aes(y = delta, x = trial, group = 1)) +
+     ylab("Delta estimation of points per block")+ xlab("Block") +
+     geom_point(colour = "#e8ce54", size = 5) +
+     geom_errorbar(aes(ymin=delta-sd, ymax=delta+sd), size= 0.5, width = 0.1, colour = "#e8ce54") +
+  geom_hline(yintercept=0, colour = "grey") +
+     theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+           panel.background = element_rect(fill = "transparent", colour = NA),
+          plot.background = element_rect(fill = "transparent", colour = NA),
+           panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                           colour = "lightgrey"), 
+           panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                           colour = "lightgrey"))
+
+if (save_images==1){
+  ggsave(estimation_across_plot, file=paste0(workingdir,'/estimation_across_plot.png'),height=9,width=12)
+}
+
+estimation_all_blocks <- estimation_block %>%
+  summarise(estimationGamblingBlock = mean(delta))
+alldata <- right_join(estimation_all_blocks, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$estimationGamblingBlock, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = estimationGamblingBlock)) +
+  xlab("Catastrophising scores")+ ylab("Mean of delta of estimation of points earned for each block") +
+  geom_smooth(method = 'lm') +
+  geom_point()
+
+
+estimation_end <- gambling %>% #question on estimation of points earned by the end of the task
+  filter(display == "Question" & Screen.Name == "Screen 2" & Zone.Type == "response_slider_endValue")%>%
+  select(Participant.Public.ID, Trial.Number, Response) %>%
+  set_names(c("ID", "trial", "response")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response)) %>%
+  group_by(ID, trial) %>%
+  summarise(delta =
+  if(trial == 1) {delta = response - 540}
+  else if (trial == 2){delta = response - 540}
+  else if (trial == 3){delta = response - 540}
+  else if (trial == 4){delta = response - 540}
+  else if (trial == 5){delta = response - 540})
+
+#alldata <- merge(estimation_end, alldata, by = 'ID')
+#ggplot(alldata, aes(y = catScore, x = delta)) +
+ # ylab("Catastrophising scores")+ xlab("Mean of delta of estimation of points earned in total")
+
+
+estimation_end_all <- estimation_end %>%
+  select(ID, delta) %>%
+  summarise(estimationGambling = mean(delta))
+alldata <- right_join(estimation_end_all, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$estimationGambling, method = 'pearson')
+estimation <- ggplot(alldata, aes(y = catScore, x = estimationGambling)) +
+  ylab("Catastrophising scores")+ xlab("Mean of delta of estimation of points earned in total") +
+  geom_smooth(method = 'lm', colour = "#e8ce54", size = 2) +
+  ggtitle("A") +
+  geom_point(colour = "#e8ce54", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+
+
+
+estimation_end_block2 <- estimation_end %>%
+  filter(trial == 2) %>%
+  select(ID, delta) %>%
+  summarise(estimationGamblingBlock2 = delta)
+alldata <- right_join(estimation_end_block2, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$estimationGamblingBlock2, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = estimationGamblingBlock2)) +
+  xlab("Catastrophising scores")+ ylab("Estimation of total points - Block 2") +
+  geom_smooth(method = 'lm') +
+  geom_point()
+
+
+confidence_block <- gambling %>% #question on how confident about the estimation for each block
+  filter(display == "Question" & Screen.Name == "Screen 3" & Zone.Type == "response_slider_endValue")%>%
+  select(Participant.Public.ID, Response) %>%
+  set_names(c("ID", "response")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response)) %>%
+  group_by(ID) %>%
+  summarise(confidenceGamblingBlock = mean(response))
+alldata <- right_join(confidence_block, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$confidenceGamblingBlock, method = 'pearson')
+ggplot(alldata, aes(x = catScore, y = confidenceGamblingBlock)) +
+  xlab("Catastrophising scores")+ ylab("Mean confidence in the estimation for each block") +
+  geom_smooth(method = 'lm') +
+  geom_point()
+
+
+
+confidence_end <- gambling %>% #question on how confident about the estimation for the end of the task
+  filter(display == "Question" & Screen.Name == "Screen 4" & Zone.Type == "response_slider_endValue")%>%
+  select(Participant.Public.ID, Response, Trial.Number) %>%
+  set_names(c("ID", "response", "trial")) %>%
+  transform(response = as.character(response)) %>%
+  transform(response = as.numeric(response))
+
+
+confidence_end_all <- confidence_end %>%
+   group_by(ID) %>%
+  summarise(confidenceGambling = mean(response))
+alldata <- right_join(confidence_end_all, alldata, by = 'ID')
+cor.test(y = alldata$catScore, x = alldata$confidenceGambling, method = 'pearson')
+confidence <- ggplot(alldata, aes(y = catScore, x = confidenceGambling)) +
+  ylab("Catastrophising scores")+ xlab("Mean confidence in the estimation of total points") +
+  geom_smooth(method = 'lm', colour = "#e8ce54", size = 2) +
+  ggtitle("B")+
+  geom_point(colour = "#e8ce54", size = 2) + 
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+library(patchwork)
+gambling_plot <- (estimation / confidence) + plot_layout(guides = 'collect')
+
+if (save_images==1){
+  ggsave(gambling_plot, file=paste0(workingdir,'/gambling_plot.png'),height=9,width=12)
+}
+
+
+
+
+model_gambling <- lm(estimationGambling ~ catScore + confidenceGambling + estimationGamblingBlock, data = alldata)
+summary(model_gambling)
+
+model_error <- lm(estimationGambling ~ catScore + estimationError, data = alldata)
+summary(model_error)
+
+
+model_gambling_questionnaires <- lm(estimationGambling ~ catScore + gadScore + phqScore + pswqScore + covidScore, data = alldata)
+summary(model_gambling_questionnaires)
+
+model_gambling_all <- lm(estimationGambling ~ catScore + confidenceGambling + estimationGamblingBlock + covidScore, data = alldata)
+summary(model_gambling_all)
+
+anova(model_gambling, model_gambling_all)
+
+model_gambling_confidence <- lm(confidenceGambling ~ catScore + estimationGambling , data = alldata)
+summary(model_gambling_confidence)
+
+
+
+```
+
+
+
+
+BART_1
+
+Read the Balloon Analogue Risk task block 1 raw data and exclude two participants. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart1_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score.
+The next steps will generate a data frame for the hBayes model. First, filter the displays for when the balloon burst or the participant collected points. Code the variable so burst is 1 and collect points is 0. Then, transform the columns into rows (except for the ID column). Bind datframes pumps and explosion and delete the columns that are not need, leaving only ID, pumps and explosion. Write a table of this dataframe.
+```{r BART block 1}
+
+bart1 <- read.csv(paste0(workingdir, '/datacollection2.nosync/data_exp_13345-v30_task-332j.csv'))
+
+
+bart1_pumps <- bart1 %>%
+  filter(Response == "Air") %>%
+  select(Participant.Public.ID, Trial.Number, Response) %>%
+  set_names(c("ID", "trial", "response")) %>%
+  group_by(ID) %>%
+  transform(response = as.character(response))  %>%
+  transform(response = as.numeric(response)) %>%
+  pivot_wider(id_cols= ID, names_from = trial, values_from = response, values_fn = list(response = length)) #transforming the row in columns to extract the number of pumps per trial
+
+  bart1_num <- sapply(bart1_pumps[-1],as.numeric) 
+  bart1_mean <- data.frame(pumpsBart1Mean = rowMeans(bart1_num, na.rm = TRUE))
+  bart1_pumps_means <- cbind(bart1_pumps, bart1_mean) %>%
+    select(ID, pumpsBart1Mean)
+
+alldata <- right_join(bart1_pumps_means, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$pumpsBart1Mean, method = 'spearman')
+a <- ggplot(alldata, aes(y = catScore, x = pumpsBart1Mean)) +
+  ylab("Catastrophising scores")+ 
+  xlab("Mean number of pumps in
+     the low cost block") +
+  geom_smooth(method = 'lm', colour = "#0390fc", size = 2) +
+  geom_point(colour = "#0390fc", size = 2)+
+  ggtitle("A")+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+model_bart1 <- lm(pumpsBart1Mean ~ catScore, data = alldata)
+summary(model_bart1)
+
+model_bart1_questionnaires <- lm(pumpsBart1Mean ~ catScore + covidScore, data = alldata)
+summary(model_bart1_questionnaires)
+
+
+
+explosion <- bart1 %>%
+  filter(display == "burst" | display == "collectPoints" | display == "zeroPoints" ) %>%
+  select(Participant.Public.ID, display) %>%
+  set_names(c("subjID", "display")) %>%
+  mutate(explosion = ifelse(display == 'burst',1, 0)) %>% group_by(subjID)
+
+pumps <- pivot_longer(bart1_pumps, cols = 2:31, names_to = "trial", values_to = "pumps") %>% rename(subjID = ID) %>% group_by(subjID)
+
+bartdata1 <- cbind(pumps, explosion) %>% select(- subjID...4, - trial, - display) %>% rename(subjID = subjID...1)
+
+write.table(bartdata1,file= paste0(workingdir, '/datacollection2.nosync/bartdata1.txt',sep='\t',row.names=FALSE))
+
+
+rt1 <- bart1 %>%
+  filter(Response == "Air") %>%
+  select(Participant.Public.ID, Reaction.Time) %>%
+  set_names(c("ID", "RT")) %>%
+  transform(RT = as.character(RT))  %>%
+  transform(RT = as.numeric(RT)) %>%
+  filter(RT < 1000) %>%
+  group_by(ID) %>%
+  summarise(RT1 = mean(RT))
+
+alldata <- right_join(rt1, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$RT1, method = 'spearman')
+rt1_plot <- ggplot(alldata, aes(y = catScore, x = RT1)) +
+  ylab("Catastrophising scores")+ 
+  xlab("Mean reaction time (miliseconds)
+       in the low cost block") +
+  geom_smooth(method = 'lm', colour = "#0390fc", size = 2) +
+  ggtitle("A")+
+  geom_point(colour = "#0390fc", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+
+rt1_collect <- bart1 %>%
+  filter(Response == "Collect Points") %>%
+  select(Participant.Public.ID, Reaction.Time) %>%
+  set_names(c("ID", "RT")) %>%
+  transform(RT = as.character(RT))  %>%
+  transform(RT = as.numeric(RT)) %>%
+  filter(RT < 1000) %>%
+  group_by(ID) %>%
+  summarise(RT1C = mean(RT))
+
+alldata <- right_join(rt1_collect, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$RT1C, method = 'spearman')
+rt1_plot <- ggplot(alldata, aes(y = catScore, x = RT1C)) +
+  ylab("Catastrophising scores")+ 
+  xlab("Mean reaction time (miliseconds)
+       in the low cost block") +
+  geom_smooth(method = 'lm', colour = "#0390fc", size = 2) +
+  ggtitle("A")+
+  geom_point(colour = "#0390fc", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+```
+
+
+
+
+BART_2
+
+Read the Balloon Analogue Risk task block 2 raw data and exclude two participants. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart2_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score. 
+The next steps will generate a data frame for the hBayes model, following the same procedure done for block 1. First, filter the displays for when the balloon burst or the participant collected points. Code the variable so burst is 1 and collect points is 0. Then, transform the columns into rows (except for the ID column). Bind datframes pumps and explosion and delete the columns that are not need, leaving only ID, pumps and explosion. Write a table of this dataframe.
+
+```{r BART block 2}
+bart2 <- read.csv(paste0(workingdir, '/datacollection2.nosync/data_exp_13345-v30_task-yfu5.csv'))
+  
+  bart2_pumps <- bart2 %>%
+  filter(Response == "Air") %>%
+  select(Participant.Public.ID, Trial.Number, Response) %>%
+  set_names(c("ID", "trial", "response")) %>%
+  group_by(ID) %>%
+  transform(response = as.character(response))  %>%
+  transform(response = as.numeric(response)) %>%
+  pivot_wider(id_cols= ID, names_from = trial, values_from = response, values_fn = list(response = length))
+  bart2_num <- sapply(bart2_pumps[-1],as.numeric) 
+  bart2_mean <- data.frame(pumpsBart2Mean = rowMeans(bart2_num, na.rm = TRUE))
+  bart2_pumps_means <- cbind(bart2_pumps, bart2_mean) %>%
+    select(ID, pumpsBart2Mean)
+  
+alldata <- right_join(bart2_pumps_means, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$pumpsBart2Mean, method = 'spearman')
+b <- ggplot(alldata, aes(y = catScore, x = pumpsBart2Mean)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Mean number of pumps in
+     high cost block") +
+  geom_smooth(method = 'lm', colour = "#8905f5", size = 2) +
+  geom_point(colour = "#8905f5", size = 2)+
+  ggtitle("B")+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+model_bart2 <- lm(pumpsBart2Mean ~ catScore, data = alldata)
+summary(model_bart2)
+
+model_bart2_questionnaires <- lm(pumpsBart2Mean ~ catScore + covidScore, data = alldata)
+summary(model_bart2_questionnaires)
+
+
+
+explosion <- bart2 %>%
+  filter(display == "burst" | display == "collectPoints" | display == "zeroPoints" ) %>%
+  select(Participant.Public.ID, display) %>%
+  set_names(c("subjID", "display")) %>%
+  mutate(explosion = ifelse(display == 'burst',1, 0)) %>% group_by(subjID)
+
+pumps <- pivot_longer(bart2_pumps, cols = 2:31, names_to = "trial", values_to = "pumps") %>% rename(subjID = ID) %>% group_by(subjID)
+
+bartdata2 <- cbind(pumps, explosion) %>% select(- subjID...4, - trial, - display) %>% rename(subjID = subjID...1)
+
+write.table(bartdata2,file= workingdir,'/datacollection2.nosync/bartdata2.txt',sep='\t',row.names=FALSE) 
+
+rt2 <- bart2 %>%
+  filter(Response == "Air") %>%
+  select(Participant.Public.ID, Reaction.Time) %>%
+  set_names(c("ID", "RT")) %>%
+  transform(RT = as.character(RT))  %>%
+  transform(RT = as.numeric(RT)) %>%
+  filter(RT < 1000) %>%
+  group_by(ID) %>%
+  summarise(RT2 = mean(RT))
+
+alldata <- right_join(rt2, alldata, by = 'ID')
+cor.test(x = alldata$catScore, y = alldata$RT2, method = 'spearman')
+rt2_plot <- ggplot(alldata, aes(y = catScore, x = RT2)) +
+  ylab("Catastrophising scores")+ 
+  xlab("Mean reaction time (miliseconds)
+       in the high cost block") +
+  geom_smooth(method = 'lm', colour = "#8905f5", size = 2) +
+  ggtitle("B")+
+  geom_point(colour = "#8905f5", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+library(patchwork)
+bart_rt_study1 <- (rt1_plot | rt2_plot) / (rt1_plot) + plot_layout(guides = 'collect')
+
+if (save_images==1){
+  ggsave(bart_rt_study1, file=paste0(workingdir,'/bart_rt_study1.png'),height=9,width=12)
+}
+
+
+```
+
+
+To extract the number of pumps after the early burst take the data frame containing the number of pumps and transform the columns into rows. Find the row index where there was an early burst by looking at the burst counter. The column "Attempt" contains the numbe of times the balloon needs to be pumped before bursting. To find the trial that the early burst took place add 1 to the row index and  extract the trial number, then add 1 to the trial number to find the trial after the early burst. Rename the column pumps to pumps1, for example to differentiate each variable when joining the data frames from the early burst after 1, 2 and three pumps. Take the avarege of pumps in the ballon after the early burst for each participant. Merge that with all data and test the correlation between the mean and the catastrophising scores.
+
+```{r BART block 2- early burst} 
+
+bart2_pumps_long <- pivot_longer(bart2_pumps, cols = 2:31, names_to = "trial", values_to = "pumps")
+ bart2_pumps_long[is.na(bart2_pumps_long)] = 0
+ 
+pump1<- which(bart2$Screen.Name == 'burst_counter' & bart2$Attempt == 1)
+pump1<- pump1 + 1
+pump1_trial <- bart2[pump1,] %>% select(Participant.Public.ID, Trial.Number) %>% 
+  set_names("ID", "Trial.Number") %>%
+  transform(Trial.Number = as.character(Trial.Number))  %>% transform(Trial.Number = as.numeric(Trial.Number))
+pump_after_pump1 <-  full_join(pump1_trial, bart2_pumps_long, by = 'ID') %>% filter(trial == Trial.Number+1) %>%
+  rename(pumps1 = pumps)
+
+pump2<- which(bart2$Screen.Name == 'burst_counter' & bart2$Attempt == 2)
+pump2<- pump2 + 1
+pump2_trial <- bart2[pump2,] %>% select(Participant.Public.ID, Trial.Number) %>% 
+  set_names("ID", "Trial.Number") %>%
+  transform(Trial.Number = as.character(Trial.Number))  %>% transform(Trial.Number = as.numeric(Trial.Number))
+pump_after_pump2 <-  full_join(pump2_trial, bart2_pumps_long, by = 'ID') %>% filter(trial == Trial.Number+1)%>%
+  rename(pumps2 = pumps)
+
+pump3<- which(bart2$Screen.Name == 'burst_counter' & bart2$Attempt == 3)
+pump3<- pump3 + 1
+pump3_trial <- bart2[pump3,] %>% select(Participant.Public.ID, Trial.Number) %>% 
+  set_names("ID", "Trial.Number") %>%
+  transform(Trial.Number = as.character(Trial.Number))  %>% transform(Trial.Number = as.numeric(Trial.Number))
+pump_after_pump3 <-  full_join(pump3_trial, bart2_pumps_long, by = 'ID') %>% filter(trial == Trial.Number+1)%>%
+rename(pumps3 = pumps)
+
+
+pump_after_pump123 <- full_join(pump_after_pump1, pump_after_pump2, by = 'ID') 
+pump_after_mean <- full_join(pump_after_pump123, pump_after_pump3, by = 'ID') %>% 
+  select(ID, pumps1, pumps2, pumps3) %>% 
+  pivot_longer(., cols = 2:4, names_to = "number", values_to = "pumps") %>%
+  group_by(ID) %>% 
+  summarise(pumpEarlyBurstMean = mean(pumps, na.rm = TRUE))
+  
+
+ 
+alldata <- right_join(pump_after_mean, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$pumpEarlyBurstMean, method = 'spearman')
+d <- ggplot(alldata, aes(y = catScore, x = pumpEarlyBurstMean)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Mean of number of pumps after early burst 
+       in the high cost block") +
+  geom_smooth(method = 'lm', colour = "#8905f5", size = 2) +
+  geom_point(colour = "#8905f5", size = 2) +
+  ggtitle("D")+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+  
+
+model_bart2EarlyBurst <- lm(pumpEarlyBurstMean ~ catScore, data = alldata)
+summary(model_bart2EarlyBurst)
+
+model_bart2EarlyBurst_questionnaires <- lm(pumpEarlyBurstMean ~ catScore + covidScore, data = alldata)
+summary(model_bart2EarlyBurst_questionnaires)
+
+
+```
+
+
+
+
+BART_1 + BART_2
+
+To find the total avarege across both blocks of the BART task merge both avareges by ID, and take the mean of the two means. Merge that with all data to test the correkation with the catastrophising score.
+
+```{r BART block 1 and 2}
+
+
+bart_total <- merge(bart1_pumps_means, bart2_pumps_means, by = "ID")
+bart_total$bartDiff <- bart_total$pumpsBart1Mean - bart_total$pumpsBart2Mean
+
+
+bart_total_num <- sapply(bart_total[-1],as.numeric) 
+ bart_total_mean <- data.frame(barTotalMean = rowMeans(bart_total_num, na.rm = TRUE))
+ bart_total_means <- cbind(bart_total, bart_total_mean) %>%
+    select(ID, bartDiff, barTotalMean)
+  
+
+alldata <- right_join(bart_total_means, alldata, by = 'ID') 
+cor.test(x = alldata$catScore, y = alldata$barTotalMean, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = barTotalMean)) + 
+  xlab("Catastrophising scores")+ 
+  ylab("Mean of number of pumps in
+     Block 1 and 2") +
+  geom_smooth(method = 'lm', colour = "#82f069") +
+  geom_point(colour = "#82f069")
+
+cor.test(x = alldata$catScore, y = alldata$bartDiff, method = 'spearman')
+c <- ggplot(alldata, aes(y = catScore, x = bartDiff)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Difference in the mean of number 
+  of pumps between blocks") +
+  geom_smooth(method = 'lm', colour = "#f57fae", size = 2) +
+  geom_point(colour = "#f57fae", size = 2)+
+  ggtitle("C")+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+library(patchwork)
+bart_study1 <- (a | b) / (c | d)
+
+if (save_images==1){
+  ggsave(bart_study1, file=paste0(workingdir,'/bart_study1_plot.png'),height=9,width=12)
+}
+
+
+
+
+
+
+
+model_bart_total <- lm(barTotalMean ~ catScore + pumpEarlyBurstMean, data = alldata)
+summary(model_bart_total)
+
+model_bart_total_questionnaires <- lm(barTotalMean ~ catScore + covidScore, data = alldata)
+summary(model_bart_total_questionnaires)
+
+
+
+
+bartdata <- rbind(bartdata1, bartdata2)
+
+write.table(bartdata,file= paste0(workingdir,'/datacollection2.nosync/bartdata.txt',sep='\t',row.names=FALSE)) 
+
+
+
+# bart1_pumps_means <- bart1_pumps_means %>% rename(pumps = pumpsBart1Mean)
+# bart2_pumps_means <- bart2_pumps_means %>% rename(pumps = pumpsBart2Mean)
+# bart_1_2 <- rbind(bart1_pumps_means, bart2_pumps_means)
+# 
+# alldata <- merge(bart_1_2, alldata, by = 'ID')
+# cor.test(x = alldata$catScore, y = alldata$pumps, method = 'spearman')
+# ggplot(alldata, aes(x = catScore, y = pumps)) +
+#   xlab("Catastrophising scores")+ 
+#   ylab("Mean of number of pumps Block 1 and 2") +
+#   geom_smooth(method = 'lm') +
+#   ggtitle("Block 1 + 2")+
+#   geom_point()
+# 
+# 
+# ggplot(alldata, aes(x = catScore, y = pumpsBart1Mean + pumpsBart2Mean)) +
+#   xlab("Catastrophising scores")+ 
+#   ylab("Mean of number of pumps in
+#      Block 1 and 2") +
+#   geom_smooth(method = 'lm', colour = "#82f069") +
+#   ggtitle("C")+
+#   geom_point(colour = "#82f069")
+
+
+
+
+
+
+```
+
+
+
+
+hBayesDM
+```{r hBayesDM}
+fit1 <- bart_par4(data =  workingdir,'/datacollection2.nosync/bartdata1.txt', niter = 2000, nwarmup = 1000, nchain = 4, ncore = 4)
+ 
+save(fit1,file= workingdir,'/datacollection2.nosync/fit1.RData')
+ 
+fit2 <- bart_par4(data = workingdir,'/datacollection2.nosync/bartdata2.txt', niter = 2000, nwarmup = 1000, nchain = 4, ncore = 4)
+ 
+save(fit2,file= workingdir,'/datacollection2.nosync/fit2.RData')
+
+fit <- bart_par4(data = workingdir,'/datacollection2.nosync/bartdata.txt', niter = 2000, nwarmup = 1000, nchain = 4, ncore = 4)
+ 
+save(fit,file= workingdir,'/datacollection2.nosync/fit.RData')
+
+
+```
+
+
+
+
+BART- model
+
+To analyse the result from the model, first load both models fitted. Merge model parameters in one dataframe, then merge that with the dataframe containing all questionaires and tasks. Test the correlation between the catastrophising score and the gamma (risk-taking), phi (prior belief of balloon not bursting), eta (updating rate) and tau (inverse temperature). The models will take the gamma as an IV and the other three parameters and the questionnaires scores as DV. Perform an anova of the model with and without the questionnaires scores.
+```{r BART - model}
+
+load(file= paste0(workingdir,'/datacollection2.nosync/fit1.RData'))
+load(file= paste0(workingdir,'/datacollection2.nosync/fit2.RData'))
+load(file= paste0(workingdir,'/datacollection2.nosync/fit.RData'))
+
+bart <- merge (fit1$allIndPars, fit2$allIndPars, by = "subjID", suffixes = c("_fit1","_fit2"))
+bart <- merge (bart, fit$allIndPars, by = "subjID")
+
+alldata <- merge(alldata, bart, by.x = "ID", by.y = "subjID")
+
+cor.test(x = alldata$catScore, y = alldata$gam_fit1, method = 'spearman')
+gamma1 <- ggplot(alldata, aes(y = catScore, x = gam_fit1)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Gamma (risk-taking)
+  low cost block") +
+  geom_smooth(method = 'lm', colour = "#0390fc", size = 2) +
+  ggtitle("A")+
+  geom_point(colour = "#0390fc", size = 2) + 
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+
+cor.test(x = alldata$catScore, y = alldata$phi_fit1, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = phi_fit1)) + 
+  xlab("Catastrophising scores")+ ylab("Prior belief of balloon not bursting") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1")+
+  geom_point()
+
+cor.test(x = alldata$catScore, y = alldata$eta_fit1, method = 'spearman')
+eta1 <- ggplot(alldata, aes(y = catScore, x = eta_fit1)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Updating rate
+  low cost block") +
+  geom_smooth(method = 'lm', colour = "#0390fc", size = 2) +
+  ggtitle("C")+
+  geom_point(colour = "#0390fc", size = 2)+
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+cor.test(x = alldata$catScore, y = alldata$tau_fit1, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = tau_fit1)) + 
+  xlab("Catastrophising scores")+ ylab("Inverse temperature") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1")+
+  geom_point()
+
+model_gam1 <- lm(gam_fit1 ~ catScore + phi_fit1 + eta_fit1 + tau_fit1, data = alldata)
+summary(model_gam1)
+model_gam1_questionnaires <- lm(gam_fit1 ~ catScore + phqScore + pswqScore + gadScore + staiScore + covidScore + phi_fit1 + eta_fit1 + tau_fit1, data = alldata)
+summary(model_gam1_questionnaires)
+anova(model_gam1, model_gam1_questionnaires)
+
+
+cor.test(x = alldata$catScore, y = alldata$gam_fit2, method = 'spearman')
+gamma2 <- ggplot(alldata, aes(y = catScore, x = gam_fit2)) + 
+ylab("Catastrophising scores")+ 
+xlab("Gamma (risk-taking)
+high cost block") +
+  geom_smooth(method = 'lm', colour = "#8905f5", size = 2) +
+  ggtitle("B")+
+  geom_point(colour = "#8905f5", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+cor.test(x = alldata$catScore, y = alldata$phi_fit2, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = phi_fit2)) + 
+  xlab("Catastrophising scores")+ ylab("Prior belief of balloon not bursting") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 2")+
+  geom_point()
+
+cor.test(x = alldata$catScore, y = alldata$eta_fit2, method = 'spearman')
+eta2 <- ggplot(alldata, aes(y = catScore, x = eta_fit2)) + 
+  ylab("Catastrophising scores")+ 
+  xlab("Updating rate
+high cost block") +
+  geom_smooth(method = 'lm', colour = "#8905f5", size = 2) +
+  ggtitle("D")+
+  geom_point(colour = "#8905f5", size = 2) +
+  theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.grid.major = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"), 
+        panel.grid.minor = element_line(size = 0.20, linetype = 'solid',
+                                         colour = "lightgrey"))
+
+library(patchwork)
+bart_model_study1 <- (gamma1 | gamma2 ) / (eta1 | eta2) + plot_layout(guides = 'collect')
+
+if (save_images==1){
+  ggsave(bart_model_study1, file=paste0(workingdir,'/bart_model_study1.png'),height=9,width=12)
+}
+
+
+cor.test(x = alldata$catScore, y = alldata$tau_fit2, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = tau_fit2)) + 
+  xlab("Catastrophising scores")+ ylab("Inverse temperature") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 2")+
+  geom_point()
+
+model_gam2 <- lm(gam_fit2 ~ catScore + phi_fit2 + eta_fit2 + tau_fit2, data = alldata)
+summary(model_gam2)
+model_gam2_questionnaires <- lm(gam_fit2 ~ catScore + covidScore + phi_fit2 + eta_fit2 + tau_fit2, data = alldata)
+summary(model_gam2_questionnaires)
+anova(model_gam2, model_gam2_questionnaires)
+
+
+cor.test(x = alldata$catScore, y = alldata$gam, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = gam)) + 
+  xlab("Catastrophising scores")+ ylab("Gamma (risk-taking)") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1 + 2")+
+  geom_point()
+
+cor.test(x = alldata$catScore, y = alldata$phi, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = phi)) + 
+  xlab("Catastrophising scores")+ ylab("Prior belief of balloon not bursting") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1 + 2")+
+  geom_point()
+
+cor.test(x = alldata$catScore, y = alldata$eta, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = eta)) + 
+  xlab("Catastrophising scores")+ ylab("Updating rate") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1 + 2")+
+  geom_point()
+
+cor.test(x = alldata$catScore, y = alldata$tau, method = 'spearman')
+ggplot(alldata, aes(x = catScore, y = tau)) + 
+  xlab("Catastrophising scores")+ ylab("Inverse temperature") +
+  geom_smooth(method = 'lm') +
+  ggtitle("Block 1 + 2")+
+  geom_point()
+
+fit1_den <- plot(fit1)
+fit1_trace <- plot(fit1, type= "trace")
+fit2_den <- plot(fit2)
+fit2_trace <- plot(fit2, type= "trace")
+plotInd(fit, "gam")
+
+
+write.csv(alldata, file=paste0(workingdir,'/alldata_tasks.csv'))
+```
+
+
