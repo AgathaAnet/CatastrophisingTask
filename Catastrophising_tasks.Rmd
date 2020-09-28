@@ -75,7 +75,7 @@ table1(~ Sex + age + continent + Employment.Status + Diagnosis, data = prolific_
 
 CATASTROPHISING QUESTIONNAIRE
 
-Read catastrophising questionnaite raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised answers, transform them into numbers, and add up the response to each question to get the overall score. 
+Read catastrophising questionnaite raw data. Filter the data to select only the quantised answers, transform them into numbers, and add up the response to each question to get the overall score. 
 
 "cat_health" is the variable that takes the score for three questions from the catastrophising questionnaire that ask about health: 21- "I imagine that I might have a serious health issue.",  9- "If I have a medical symptom (headache, heart palpitations, stomach ache), I think I must have a serious disease.", 22- "If I have an illness, I don't believe that treatment will work."
 
@@ -114,7 +114,7 @@ alldata <- merge(cat_score, cat_health, by = 'ID')
 
 PHQ8
 
-Read Patient Health Questionnaire 8 raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses, transform them into numbers, and add up the response to each question to get the overall score. Merge scores with alldata by. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+Read Patient Health Questionnaire 8 raw data. Filter the data to select only the quantised responses, transform them into numbers, and add up the response to each question to get the overall score. Merge scores with alldata by. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
 ```{r PHQ}
 phq <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-8bly.csv'))
   
@@ -144,7 +144,7 @@ ggplot(alldata, aes(x = catScore, y = phqScore)) +
 
 PSWQ
 
-Read Penn State Worry Questionnaire raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+Read Penn State Worry Questionnaire raw data. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
 ```{r PSWQ}
 pswq <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-m1gp.csv'))
 
@@ -185,7 +185,7 @@ ggplot(alldata, aes(x = catScore, y = pswqScore)) +
 
 GAD
 
-Read Generalised Anxiety Disorder questionnaire raw data and delete two participants. Filter quantised responses and filter out response to question 9: "If you checked off any problems, how difficult have these made it for you to do your work, take care of things at home, or get along with other people?", since this question is conditioned to other other questions.
+Read Generalised Anxiety Disorder questionnaire raw data. Filter quantised responses and filter out response to question 9: "If you checked off any problems, how difficult have these made it for you to do your work, take care of things at home, or get along with other people?", since this question is conditioned to other other questions.
 Transform the responses into numbers, and add up all responses to find the final score. Merge the score with all the data frame containing the other questionnaires by participant's ID.  Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
 ```{r GAD}
 gad <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-x6mx.csv'))
@@ -217,7 +217,7 @@ ggplot(alldata, aes(x = catScore, y = gadScore)) +
 
 STAI-T
 
-Read State-Trait Anxiety Inventory raw data and delete the two participants that did not meet the criteria to be included in the analysis. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
+Read State-Trait Anxiety Inventory raw data. Filter the data to select only the quantised responses from the "positive" questions, transform the response into numbers, and add up all responses. Do the same for "negative" questions, merge both data frames and substract the values for the positive questions from the negative questions to find the overall questionnaire score. Merge scores with alldata by ID. Test the correlation between the catastrophising scores and the PHQ scores using Pearson's correlation test and plot the scores with linear regression line.
 ```{r STAI-T}
 stai_t <- read.csv(paste0(workingdir,'/datacollection2.nosync/data_exp_13345-v30_questionnaire-rr7k.csv'))
 
@@ -367,7 +367,7 @@ ggplot(alldata, aes(x = catScore, y = question9Covid)) +
 
 MATHS TASK
 
-Read the Maths task raw data, exclude the two participants who did not meet the criteria to be included in the analysis. Filter only the first self-report performance question, that will be named "ability", and the end value to the slider. Transform the values in numbers and merge the values with the dataframe including all questionnaire scores by ID. Test the correlation between the ability and the catastrophising score with Pearson's test. 
+Read the Maths task raw data. Filter only the first self-report performance question, that will be named "ability", and the end value to the slider. Transform the values in numbers and merge the values with the dataframe including all questionnaire scores by ID. Test the correlation between the ability and the catastrophising score with Pearson's test. 
 
 Next, filter the 3 self-report performance (one each block) in relation to the task, filter only the end slider value and find the avarege for the 3 responses per participants. Test the correlation of these values with the catastrophisig scores.
 Do the same for the 3 difficulty questions (one each block). 
@@ -510,8 +510,7 @@ summary(ability_questionnaires)
 
 GAMBLING TASK
 
-Read Gambling task raw data and delete two participants who were excluded.
-Filter only responses to the estimation of the points earned in each block question ("estimation_block"). Find the difference between the participant's estimation of the points earned in each block and the actual number of points earned in each block. Then take the mean of the that difference ("estimation_all_blocks") for each participant and test it's correlation with the catastrophising score using Pearson's test. 
+Read Gambling task raw data. Filter only responses to the estimation of the points earned in each block question ("estimation_block"). Find the difference between the participant's estimation of the points earned in each block and the actual number of points earned in each block. Then take the mean of the that difference ("estimation_all_blocks") for each participant and test it's correlation with the catastrophising score using Pearson's test. 
 
 Filter only responses to the estimation of points that will be earned by the end of the task ("estimation end"). Find the difference between the participant's estimation of the total points that will be earned and the actual number of total points (540) earned. Then take the mean of the that difference ("estimation_end_all") for each participant and test it's correlation with the catastrophising score using Pearson's test.
 
@@ -707,7 +706,7 @@ summary(model_gambling_confidence)
 
 BART_1
 
-Read the Balloon Analogue Risk task block 1 raw data and exclude two participants. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart1_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score.
+Read the Balloon Analogue Risk task block 1 raw data. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart1_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score.
 The next steps will generate a data frame for the hBayes model. First, filter the displays for when the balloon burst or the participant collected points. Code the variable so burst is 1 and collect points is 0. Then, transform the columns into rows (except for the ID column). Bind datframes pumps and explosion and delete the columns that are not need, leaving only ID, pumps and explosion. Write a table of this dataframe.
 ```{r BART block 1}
 
@@ -827,7 +826,7 @@ rt1_plot <- ggplot(alldata, aes(y = catScore, x = RT1C)) +
 
 BART_2
 
-Read the Balloon Analogue Risk task block 2 raw data and exclude two participants. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart2_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score. 
+Read the Balloon Analogue Risk task block 2 raw data. Filter the number of times the participant pumped the balloon by pressing "Air". Transform the rows into columns to extract the numbe of pumps (lenght of "Air") per trial. Find the mean of pumps across trials("bart2_pumps_means"), merge the means with all the data by subject ID and test the correlation between the mean of the number of pumps with the catastrophising score. 
 The next steps will generate a data frame for the hBayes model, following the same procedure done for block 1. First, filter the displays for when the balloon burst or the participant collected points. Code the variable so burst is 1 and collect points is 0. Then, transform the columns into rows (except for the ID column). Bind datframes pumps and explosion and delete the columns that are not need, leaving only ID, pumps and explosion. Write a table of this dataframe.
 
 ```{r BART block 2}
